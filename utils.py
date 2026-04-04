@@ -5,20 +5,16 @@ import numpy as np
 from scipy.ndimage import maximum_filter
 
 
-def pack_hash(f1, f2, delta_t):
-	return (int(f1) << 22) | (int(f2) << 12) | int(delta_t)
-
-
 def generate_hashes_from_peaks(
 	final_peaks,
 	dt_min=5,
 	dt_max=50,
 	fan_value=10,
+	df_offset=2048,
 ):
-	"""Generate packed hashes from (freq_bin, time_frame) peaks."""
 	peaks_sorted = np.asarray(final_peaks, dtype=np.int32)
 	if peaks_sorted.size == 0:
-		return np.empty((0, 2), dtype=np.int64)
+		return np.empty((0, 3), dtype=np.int64)
 
 	if peaks_sorted.ndim != 2 or peaks_sorted.shape[1] != 2:
 		raise ValueError("final_peaks must have shape (N, 2) with (freq, time)")
@@ -40,7 +36,7 @@ def generate_hashes_from_peaks(
 		if start < end:
 			total += end - start
 
-	hashes = np.empty((total, 2), dtype=np.int64)
+	hashes = np.empty((total, 3), dtype=np.int64)
 
 	ptr = 0
 	for i in range(n):
@@ -52,11 +48,13 @@ def generate_hashes_from_peaks(
 		size = end - start
 		target_freqs = freqs[start:end].astype(np.int64, copy=False)
 		delta_t = (times[start:end] - times[i]).astype(np.int64, copy=False)
-
-		packed = (np.int64(freqs[i]) << 22) | (target_freqs << 12) | delta_t
+		delta_f = target_freqs - np.int64(freqs[i])
+		encoded_df = np.clip(delta_f + np.int64(df_offset), 0, 4095)
+		packed = (encoded_df << 12) | delta_t
 
 		hashes[ptr : ptr + size, 0] = packed
 		hashes[ptr : ptr + size, 1] = times[i]
+		hashes[ptr : ptr + size, 2] = freqs[i]
 		ptr += size
 
 	return hashes
@@ -77,6 +75,7 @@ def generate_hashes_for_audio(
 	dt_min=5,
 	dt_max=50,
 	fan_value=10,
+	df_offset=2048,
 ):
 	y, _ = librosa.load(audio_path, sr=sr)
 	max_abs = np.max(np.abs(y))
@@ -121,6 +120,7 @@ def generate_hashes_for_audio(
 		dt_min=dt_min,
 		dt_max=dt_max,
 		fan_value=fan_value,
+		df_offset=df_offset,
 	)
 
 
