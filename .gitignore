@@ -2,3 +2,5 @@ data
 env
 __pycache__
 .env
+.python-version
+*.pyc
