@@ -3,17 +3,15 @@ from pydantic import BaseModel, Field, field_validator
 
 
 class SongUploadInput(BaseModel):
-    title: Optional[str] = Field(default=None, min_length=1, max_length=255)
+    title: str = Field(min_length=1, max_length=255)
     artist: Optional[str] = Field(default=None, min_length=1, max_length=255)
 
     @field_validator("title", "artist", mode="before")
     @classmethod
     def normalize_text(cls, value):
-        if value is None:
-            return None
         if isinstance(value, str):
             stripped = value.strip()
-            return stripped or None
+            return stripped if stripped else None
         return value
 
 

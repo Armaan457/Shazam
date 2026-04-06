@@ -2,15 +2,17 @@ import os
 import tempfile
 from typing import Optional
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import HTMLResponse
 from pydantic import ValidationError
+from pathlib import Path
 from app.models import SongSearchOutput, SongUploadInput, SongUploadOutput
 from app.utils import generate_hashes_for_audio, ingest_song_from_audio, match_audio_hashes
 
 router = APIRouter()
 
-
 def _parse_song_upload_input(
-    title: Optional[str] = Form(default=None),
+    title: str = Form(...),
     artist: Optional[str] = Form(default=None),
 ) -> SongUploadInput:
     try:
@@ -27,6 +29,19 @@ def _save_upload_to_temp(upload: UploadFile) -> str:
             raise HTTPException(status_code=400, detail="Uploaded file is empty")
         tmp.write(data)
         return tmp.name
+
+static_dir = Path(__file__).resolve().parent / "static"
+
+def mount_static_files(app):
+    if static_dir.exists():
+        app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
+@router.get("/", response_class=HTMLResponse)
+def home():
+    index_file = static_dir / "index.html"
+    if index_file.exists():
+        return index_file.read_text(encoding="utf-8")
+    return "<h1>Shazam</h1><p>Frontend is not available.</p>"
 
 
 @router.get("/health")
@@ -54,7 +69,6 @@ def upload_song(
     finally:
         if os.path.exists(temp_path):
             os.remove(temp_path)
-
 
 @router.post("/songs/search", response_model=SongSearchOutput)
 def search_song(

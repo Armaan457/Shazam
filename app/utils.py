@@ -153,6 +153,11 @@ def ingest_song_from_audio(
 	conn = psycopg2.connect(DATABASE_URL)
 	cur = conn.cursor()
 	try:
+		cur.execute("SELECT id FROM songs WHERE title = %s", (title,))
+		if cur.fetchone() is not None:
+			conn.close()
+			raise ValueError(f"A song with title '{title}' already exists in the database")
+
 		cur.execute(
 			"""
 			INSERT INTO songs (title, artist, duration)

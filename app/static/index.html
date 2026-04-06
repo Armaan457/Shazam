@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Shazam</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="hero">
+        <h1>Shazam</h1>
+        <p class="lede">Upload or record a clip, then search the database.</p>
+      </section>
+
+      <section class="grid">
+        <article class="card">
+          <h2>1. Choose audio</h2>
+          <div class="recording-row">
+            <button id="recordButton" class="secondary" type="button">Start recording</button>
+            <span id="recordStatus" class="status">Mic idle</span>
+          </div>
+
+          <label class="dropzone" for="audioInput">
+            <input id="audioInput" type="file" accept=".mp3,.wav,audio/mpeg,audio/wav" />
+            <span id="fileLabel">Drop or choose an audio file</span>
+          </label>
+        </article>
+
+        <article class="card">
+          <h2>2. Song details</h2>
+          <div class="fields">
+            <label>
+              Title
+              <input id="titleInput" type="text" placeholder="Song title" maxlength="255" />
+            </label>
+            <label>
+              Artist
+              <input id="artistInput" type="text" placeholder="Artist name" maxlength="255" />
+            </label>
+          </div>
+
+          <div class="actions">
+            <button id="uploadButton" type="button">Upload song</button>
+            <button id="searchButton" type="button" class="secondary">Search song</button>
+          </div>
+        </article>
+      </section>
+
+      <section class="card result-card">
+        <div class="result-header">
+          <h2>Result</h2>
+        </div>
+        <div id="output" class="output">
+          <p class="result-main">Select an audio file or record a clip.</p>
+          <p class="result-sub">Then choose Upload song or Search song.</p>
+        </div>
+      </section>
+    </main>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>
