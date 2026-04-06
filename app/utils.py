@@ -1,6 +1,7 @@
 import os
 import time
 from collections import Counter, defaultdict
+os.environ["LIBROSA_CACHE_DIR"] = "/tmp/librosa_cache"
 import librosa
 import numpy as np
 import psycopg2
