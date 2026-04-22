@@ -30,3 +30,73 @@ A FastAPI-based service that identifies songs from audio clips using audio finge
 * **Audio Processing:** librosa, NumPy, SciPy
 * **Database:** PostgreSQL
 
+---
+
+## Setup Instructions
+
+### Prerequisites
+
+* Python 3.10 or higher
+* PostgreSQL database
+* pip (Python package manager)
+
+### 1. Clone the Repository
+
+```bash
+git clone https://github.com/Armaan457/Shazam.git
+cd shazam
+```
+
+### 2. Create a Virtual Environment
+
+Activate virtual environment using the python version specified in `.python-version` file:
+
+- **macOS/Linux:**
+
+    ```bash
+    python -m venv env
+    source env/bin/activate
+    ```
+ - **Windows:**
+     ```bash
+     python -m venv env
+     env\Scripts\activate
+     ```
+
+### 3. Install Dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+### 4. Configure Environment Variables
+
+Create a `.env` file using `.env.example` and add the respective values (PostgreSQL database URL):
+
+   - **macOS/Linux:**
+        ```bash
+        cp .env.example .env   
+        ```
+   - **Windows:**
+     ```bash
+     copy .env.example .env
+     ```
+
+
+### 5. Set Up the Database
+
+Run the database setup script to create tables and indexes:
+
+```bash
+python setup_db.py
+```
+
+### 6. Run the App
+
+Start the FastAPI server:
+
+```bash
+uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
+
