@@ -72,6 +72,7 @@ def generate_hashes_for_audio(
 	sr=22050,
 	n_fft=2048,
 	hop_length=512,
+	duration=5,
 	percentile=80,
 	neighborhood_size=20,
 	activity_percentile=20,
@@ -83,7 +84,7 @@ def generate_hashes_for_audio(
 	fan_value=10,
 	df_offset=2048,
 ):
-	y, _ = librosa.load(audio_path, sr=sr, duration=5)
+	y, _ = librosa.load(audio_path, sr=sr, duration=duration)
 	max_abs = np.max(np.abs(y))
 	if max_abs > 0:
 		y = y / max_abs
@@ -143,7 +144,7 @@ def ingest_song_from_audio(
 	page_size=1000,
 ):
 	hash_kwargs = hash_kwargs or {}
-	hashes = generate_hashes_for_audio(audio_path, **hash_kwargs)
+	hashes = generate_hashes_for_audio(audio_path, duration=None, **hash_kwargs)
 
 	if title is None:
 		title = os.path.splitext(os.path.basename(audio_path))[0]
