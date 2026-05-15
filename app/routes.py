@@ -76,7 +76,7 @@ def search_song(
 ):
     temp_path = _save_upload_to_temp(audio)
     try:
-        query_hashes = generate_hashes_for_audio(temp_path)
+        query_hashes = generate_hashes_for_audio(temp_path, duration=5)
         result = match_audio_hashes(query_hashes)
         print(f"Search completed in {result['time_taken_s']} s")
         return SongSearchOutput.model_validate(result)
