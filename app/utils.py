@@ -12,296 +12,519 @@ load_dotenv()
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 def generate_hashes_from_peaks(
-	final_peaks,
-	dt_min=5,
-	dt_max=50,
-	fan_value=10,
-	df_offset=2048,
+    final_peaks,
+    dt_min=5,
+    dt_max=50,
+    fan_value=5,
+    df_offset=2048,
 ):
-	peaks_sorted = np.asarray(final_peaks, dtype=np.int32)
-	if peaks_sorted.size == 0:
-		return np.empty((0, 3), dtype=np.int64)
+    peaks_sorted = np.asarray(final_peaks, dtype=np.int32)
 
-	if peaks_sorted.ndim != 2 or peaks_sorted.shape[1] != 2:
-		raise ValueError("final_peaks must have shape (N, 2) with (freq, time)")
+    if peaks_sorted.size == 0:
+        return np.empty((0, 3), dtype=np.int64)
 
-	order = np.argsort(peaks_sorted[:, 1], kind="mergesort")
-	peaks_sorted = peaks_sorted[order]
+    if peaks_sorted.ndim != 2 or peaks_sorted.shape[1] != 2:
+        raise ValueError("final_peaks must have shape (N, 2) with (freq, time)")
 
-	freqs = peaks_sorted[:, 0]
-	times = peaks_sorted[:, 1]
-	n = len(peaks_sorted)
+    order = np.argsort(peaks_sorted[:, 1], kind="mergesort")
+    peaks_sorted = peaks_sorted[order]
 
-	starts = np.searchsorted(times, times + dt_min, side="left")
-	ends = np.searchsorted(times, times + dt_max, side="right")
+    freqs = peaks_sorted[:, 0]
+    times = peaks_sorted[:, 1]
 
-	total = 0
-	for i in range(n):
-		start = max(starts[i], i + 1)
-		end = min(ends[i], start + fan_value)
-		if start < end:
-			total += end - start
+    n = len(peaks_sorted)
 
-	hashes = np.empty((total, 3), dtype=np.int64)
+    starts = np.searchsorted(times, times + dt_min, side="left")
+    ends = np.searchsorted(times, times + dt_max, side="right")
 
-	ptr = 0
-	for i in range(n):
-		start = max(starts[i], i + 1)
-		end = min(ends[i], start + fan_value)
-		if start >= end:
-			continue
+    total = 0
 
-		size = end - start
-		target_freqs = freqs[start:end].astype(np.int64, copy=False)
-		delta_t = (times[start:end] - times[i]).astype(np.int64, copy=False)
-		delta_f = target_freqs - np.int64(freqs[i])
-		encoded_df = np.clip(delta_f + np.int64(df_offset), 0, 4095)
-		packed = (encoded_df << 12) | delta_t
+    for i in range(n):
+        start = max(starts[i], i + 1)
+        end = min(ends[i], start + fan_value)
 
-		hashes[ptr : ptr + size, 0] = packed
-		hashes[ptr : ptr + size, 1] = times[i]
-		hashes[ptr : ptr + size, 2] = freqs[i]
-		ptr += size
+        if start < end:
+            total += end - start
 
-	return hashes
+    hashes = np.empty((total, 3), dtype=np.int64)
+    ptr = 0
+
+    for i in range(n):
+        start = max(starts[i], i + 1)
+        end = min(ends[i], start + fan_value)
+
+        if start >= end:
+            continue
+
+        size = end - start
+        target_freqs = freqs[start:end].astype(np.int64, copy=False)
+        delta_t = (times[start:end] - times[i]).astype(np.int64, copy=False)
+        delta_f = target_freqs - np.int64(freqs[i])
+        encoded_df = np.clip(delta_f + np.int64(df_offset), 0, 4095)
+        packed = (encoded_df << 12) | delta_t
+        hashes[ptr: ptr + size, 0] = packed
+        hashes[ptr: ptr + size, 1] = times[i]
+        hashes[ptr: ptr + size, 2] = freqs[i]
+        ptr += size
+
+    return hashes
 
 
 def generate_hashes_for_audio(
-	audio_path,
-	*,
-	sr=22050,
-	n_fft=2048,
-	hop_length=512,
-	duration=5,
-	percentile=80,
-	neighborhood_size=20,
-	activity_percentile=20,
-	floor_percentile=10,
-	min_floor_db=-60,
-	max_per_time=4,
-	dt_min=5,
-	dt_max=50,
-	fan_value=10,
-	df_offset=2048,
+    audio_path,
+    *,
+    sr=22050,
+    n_fft=2048,
+    hop_length=512,
+    duration=5,
+    percentile=80,
+    neighborhood_size=20,
+    activity_percentile=20,
+    floor_percentile=10,
+    min_floor_db=-60,
+    max_per_time=3,
+    dt_min=5,
+    dt_max=50,
+    fan_value=5,
+    df_offset=2048,
 ):
-	y, _ = librosa.load(audio_path, sr=sr, duration=duration)
-	max_abs = np.max(np.abs(y))
-	if max_abs > 0:
-		y = y / max_abs
+    y, _ = librosa.load(audio_path, sr=sr, duration=duration)
 
-	S = np.abs(librosa.stft(y, n_fft=n_fft, hop_length=hop_length, center=False))
-	S_db = librosa.amplitude_to_db(S, ref=np.max)
+    max_abs = np.max(np.abs(y))
 
-	local_max = maximum_filter(S_db, size=neighborhood_size) == S_db
-	thresholds = np.percentile(S_db, percentile, axis=0)
+    if max_abs > 0:
+        y = y / max_abs
 
-	frame_energy = np.mean(S_db, axis=0)
-	active_frames = frame_energy >= np.percentile(frame_energy, activity_percentile)
-	adaptive_floor = np.percentile(S_db, floor_percentile)
-	abs_floor_db = max(adaptive_floor, min_floor_db)
+    S = np.abs(
+        librosa.stft(
+            y,
+            n_fft=n_fft,
+            hop_length=hop_length,
+            center=False,
+        )
+    )
 
-	detected = (
-		local_max
-		& (S_db >= thresholds[np.newaxis, :])
-		& (S_db >= abs_floor_db)
-		& active_frames[np.newaxis, :]
-	)
+    S_db = librosa.amplitude_to_db(S, ref=np.max)
 
-	peaks = np.argwhere(detected)
-	if peaks.size == 0:
-		return np.empty((0, 2), dtype=np.int64)
+    local_max = maximum_filter(S_db, size=neighborhood_size) == S_db
 
-	buckets = defaultdict(list)
-	for f, t in peaks:
-		buckets[t].append((f, t, S_db[f, t]))
+    thresholds = np.percentile(S_db, percentile, axis=0)
 
-	final_peaks = []
-	for t in buckets:
-		selected = sorted(buckets[t], key=lambda x: -x[2])[:max_per_time]
-		final_peaks.extend((f, t) for f, t, _ in selected)
+    frame_energy = np.mean(S_db, axis=0)
 
-	final_peaks = np.array(final_peaks, dtype=np.int32)
+    active_frames = (
+        frame_energy >= np.percentile(frame_energy, activity_percentile)
+    )
 
-	return generate_hashes_from_peaks(
-		final_peaks,
-		dt_min=dt_min,
-		dt_max=dt_max,
-		fan_value=fan_value,
-		df_offset=df_offset,
-	)
+    adaptive_floor = np.percentile(S_db, floor_percentile)
+
+    abs_floor_db = max(adaptive_floor, min_floor_db)
+
+    detected = (
+        local_max
+        & (S_db >= thresholds[np.newaxis, :])
+        & (S_db >= abs_floor_db)
+        & active_frames[np.newaxis, :]
+    )
+
+    peaks = np.argwhere(detected)
+
+    if peaks.size == 0:
+        return (
+        np.empty((0, 3), dtype=np.int64),
+        len(y) / sr,
+    )
+
+    buckets = defaultdict(list)
+
+    for f, t in peaks:
+        buckets[t].append((f, t, S_db[f, t]))
+
+    final_peaks = []
+
+    for t in buckets:
+        selected = sorted(
+            buckets[t],
+            key=lambda x: -x[2]
+        )[:max_per_time]
+
+        final_peaks.extend((f, t) for f, t, _ in selected)
+
+    final_peaks = np.array(final_peaks, dtype=np.int32)
+
+    hashes =  generate_hashes_from_peaks(
+        final_peaks,
+        dt_min=dt_min,
+        dt_max=dt_max,
+        fan_value=fan_value,
+        df_offset=df_offset,
+    )
+    duration_seconds = len(y) / sr
+    return hashes, duration_seconds
 
 
 def generate_hashes_for_audio_files(audio_paths, **kwargs):
-	return {path: generate_hashes_for_audio(path, **kwargs) for path in audio_paths}
-
+    return {
+        path: generate_hashes_for_audio(path, **kwargs)
+        for path in audio_paths
+	}
 
 def ingest_song_from_audio(
-	audio_path,
-	*,
-	title=None,
-	artist=None,
-	hash_kwargs=None,
-	page_size=1000,
+    audio_path,
+    *,
+    title=None,
+    artist=None,
+    hash_kwargs=None,
+    page_size=1000,
 ):
-	hash_kwargs = hash_kwargs or {}
-	hashes = generate_hashes_for_audio(audio_path, duration=None, **hash_kwargs)
+    hash_kwargs = hash_kwargs or {}
+    hashes, duration = generate_hashes_for_audio(
+        audio_path,
+        duration=None,
+        **hash_kwargs,
+    )
+    if title is None:
+        title = os.path.splitext(
+            os.path.basename(audio_path)
+        )[0]
+    conn = psycopg2.connect(DATABASE_URL)
+    cur = conn.cursor()
+    try:
 
-	if title is None:
-		title = os.path.splitext(os.path.basename(audio_path))[0]
+        cur.execute(
+            """
+            SELECT id
+            FROM songs
+            WHERE title = %s
+            """,
+            (title,),
+        )
 
-	duration = float(librosa.get_duration(path=audio_path))
+        if cur.fetchone() is not None:
+            raise ValueError(
+                f"A song with title '{title}' already exists"
+            )
+        cur.execute(
+            """
+            INSERT INTO songs
+            (
+                title,
+                artist,
+                duration
+            )
+            VALUES (%s,%s,%s)
+            RETURNING id
+            """,
+            (
+                title,
+                artist,
+                duration,
+            ),
+        )
 
-	conn = psycopg2.connect(DATABASE_URL)
-	cur = conn.cursor()
-	try:
-		cur.execute("SELECT id FROM songs WHERE title = %s", (title,))
-		if cur.fetchone() is not None:
-			conn.close()
-			raise ValueError(f"A song with title '{title}' already exists in the database")
+        song_id = cur.fetchone()[0]
+        if len(hashes):
 
-		cur.execute(
-			"""
-			INSERT INTO songs (title, artist, duration)
-			VALUES (%s, %s, %s)
-			RETURNING id;
-			""",
-			(title, artist, duration),
-		)
-		song_id = cur.fetchone()[0]
+            rows = [
+                (
+                    int(h),
+                    int(song_id),
+                    int(offset),
+                    int(anchor_freq),
+                )
+                for h, offset, anchor_freq in hashes
+            ]
+            execute_values(
+                cur,
+                """
+                INSERT INTO fingerprints
+                (
+                    hash,
+                    song_id,
+                    time_offset,
+                    anchor_freq
+                )
+                VALUES %s
+                """,
+                rows,
+                page_size=page_size,
+            )
+        conn.commit()
 
-		if hashes.size > 0:
-			data = [
-				(int(h), int(song_id), int(offset), int(anchor_freq))
-				for h, offset, anchor_freq in hashes
-			]
-			execute_values(
-				cur,
-				"""
-				INSERT INTO fingerprints (hash, song_id, time_offset, anchor_freq)
-				VALUES %s
-				""",
-				data,
-				page_size=page_size,
-			)
+    finally:
+        cur.close()
+        conn.close()
 
-		conn.commit()
-	finally:
-		cur.close()
-		conn.close()
-
-	return {
-		"song_id": int(song_id),
-		"title": title,
-		"artist": artist,
-		"duration": float(duration),
-		"hash_count": int(len(hashes)),
-	}
-
+    return {
+        "song_id": int(song_id),
+        "title": title,
+        "artist": artist,
+        "duration": float(duration),
+        "hash_count": int(len(hashes)),
+    }
 
 def match_audio_hashes(
-	query_hashes,
-	*,
-	anchor_tol=2,
-	min_score=10,
+    query_hashes,
+    *,
+    anchor_tol=2,
+    min_score=10,
 ):
-	start_time = time.perf_counter()
+    start_time = time.perf_counter()
 
-	if query_hashes.size == 0:
-		elapsed_s = round(time.perf_counter() - start_time, 4)
-		return {
-			"song_id": None,
-			"title": None,
-			"artist": None,
-			"score": 0,
-			"hash_count": 0,
-			"anchor_tol": int(anchor_tol),
-			"min_score": int(min_score),
-			"time_taken_s": elapsed_s,
-		}
+    if query_hashes.size == 0:
+        return {
+            "song_id": None,
+            "title": None,
+            "artist": None,
+            "score": 0,
+            "top_matches": [],
+            "time_taken_s": (
+                time.perf_counter()
+                - start_time
+            ),
+        }
 
-	query_hash_list = query_hashes[:, 0].astype(int).tolist()
+    conn = psycopg2.connect(DATABASE_URL)
+    cur = conn.cursor()
+    rows = []
+    try:
 
-	conn = psycopg2.connect(DATABASE_URL)
-	cur = conn.cursor()
-	try:
-		cur.execute(
-			"""
-			SELECT hash, song_id, time_offset, anchor_freq
-			FROM fingerprints
-			WHERE hash = ANY(%s)
-			""",
-			(query_hash_list,),
-		)
-		rows = cur.fetchall()
-	finally:
-		cur.close()
-		conn.close()
+        batch_size = 200
 
-	db_map = defaultdict(list)
-	for h, song_id, offset, anchor_freq in rows:
-		db_map[int(h)].append((int(song_id), int(offset), int(anchor_freq)))
+        for start in range(
+            0,
+            len(query_hashes),
+            batch_size,
+        ):
 
-	votes = defaultdict(list)
-	for h, q_offset, q_anchor_freq in query_hashes:
-		h = int(h)
-		q_offset = int(q_offset)
-		q_anchor_freq = int(q_anchor_freq)
+            batch = query_hashes[
+                start :
+                start + batch_size
+            ]
 
-		for song_id, db_offset, db_anchor_freq in db_map.get(h, []):
-			if abs(db_anchor_freq - q_anchor_freq) > anchor_tol:
-				continue
-			votes[song_id].append(db_offset - q_offset)
+            conditions = []
+            params = []
 
-	best_song = None
-	best_score = 0
-	for song_id, deltas in votes.items():
-		count = Counter(deltas).most_common(1)[0][1]
-		if count > best_score:
-			best_score = count
-			best_song = song_id
+            for h, _, anchor_freq in batch:
 
-	if best_score < min_score:
-		best_song = None
+                conditions.append(
+                    """
+                    (
+                        hash = %s
+                        AND anchor_freq
+                        BETWEEN %s AND %s
+                    )
+                    """
+                )
 
-	best_title = None
-	best_artist = None
-	if best_song is not None:
-		conn = psycopg2.connect(DATABASE_URL)
-		cur = conn.cursor()
-		try:
-			cur.execute("SELECT title, artist FROM songs WHERE id = %s", (best_song,))
-			row = cur.fetchone()
-			if row:
-				best_title = row[0]
-				best_artist = row[1]
-		finally:
-			cur.close()
-			conn.close()
+                params.extend(
+                    [
+                        int(h),
+                        int(anchor_freq)
+                        - anchor_tol,
+                        int(anchor_freq)
+                        + anchor_tol,
+                    ]
+                )
 
-	elapsed_s = round(time.perf_counter() - start_time, 4)
-	return {
-		"song_id": int(best_song) if best_song is not None else None,
-		"title": best_title,
-		"artist": best_artist,
-		"score": int(best_score) if best_song is not None else 0,
-		"hash_count": int(len(query_hashes)),
-		"anchor_tol": int(anchor_tol),
-		"min_score": int(min_score),
-		"time_taken_s": elapsed_s,
-	}
+            sql = f"""
+            SELECT
+                hash,
+                song_id,
+                time_offset,
+                anchor_freq
+            FROM fingerprints
+            WHERE {" OR ".join(conditions)}
+            """
 
+            cur.execute(
+                sql,
+                params,
+            )
+
+            rows.extend(
+                cur.fetchall()
+            )
+        votes = defaultdict(list)
+        for (
+            _hash,
+            song_id,
+            db_offset,
+            _anchor,
+        ) in rows:
+
+            votes[song_id].append(
+                db_offset
+            )
+        delta_votes = defaultdict(list)
+        db_map = defaultdict(list)
+        for (
+            h,
+            song_id,
+            db_offset,
+            anchor_freq,
+        ) in rows:
+
+            db_map[h].append(
+                (
+                    song_id,
+                    db_offset,
+                )
+            )
+        for (
+            h,
+            q_offset,
+            _anchor,
+        ) in query_hashes:
+
+            h = int(h)
+            q_offset = int(q_offset)
+
+            for (
+                song_id,
+                db_offset,
+            ) in db_map.get(
+                h,
+                [],
+            ):
+
+                delta_votes[
+                    song_id
+                ].append(
+                    db_offset
+                    - q_offset
+                )
+        song_scores = []
+        for (
+            song_id,
+            deltas,
+        ) in delta_votes.items():
+
+            score = Counter(
+                deltas
+            ).most_common(1)[0][1]
+            if score >= min_score:
+                song_scores.append(
+                    (
+                        song_id,
+                        score,
+                    )
+                )
+
+        song_scores.sort(
+            key=lambda x: x[1],
+            reverse=True,
+        )
+
+        top_song_ids = [
+            song_id
+            for song_id, _
+            in song_scores[:5]
+        ]
+        song_info = {}
+        if top_song_ids:
+
+            cur.execute(
+                """
+                SELECT
+                    id,
+                    title,
+                    artist
+                FROM songs
+                WHERE id = ANY(%s)
+                """,
+                (top_song_ids,),
+            )
+
+            for (
+                sid,
+                title,
+                artist,
+            ) in cur.fetchall():
+
+                song_info[
+                    int(sid)
+                ] = {
+                    "title": title,
+                    "artist": artist,
+                }
+    finally:
+
+        cur.close()
+        conn.close()
+
+    top_matches = []
+
+    for (
+        song_id,
+        score,
+    ) in song_scores[:5]:
+
+        info = song_info.get(
+            song_id,
+            {},
+        )
+        top_matches.append(
+            {
+                "song_id": int(song_id),
+                "title": info.get(
+                    "title"
+                ),
+                "artist": info.get(
+                    "artist"
+                ),
+                "score": int(score),
+            }
+        )
+
+    best_match = (
+        top_matches[0]
+        if top_matches
+        else None
+    )
+
+    return {
+        "song_id": (
+            best_match["song_id"]
+            if best_match
+            else None
+        ),
+        "title": (
+            best_match["title"]
+            if best_match
+            else None
+        ),
+        "artist": (
+            best_match["artist"]
+            if best_match
+            else None
+        ),
+        "score": (
+            best_match["score"]
+            if best_match
+            else 0
+        ),
+        "top_matches": top_matches,
+        "time_taken_s": (
+            time.perf_counter()
+            - start_time
+        ),
+    }
 
 def search_song_by_audio_path(
-	audio_path,
-	*,
-	anchor_tol=2,
-	min_score=10,
-	hash_kwargs=None,
+    audio_path,
+    *,
+    anchor_tol=2,
+    min_score=10,
+    hash_kwargs=None,
 ):
-	hash_kwargs = hash_kwargs or {}
-	query_hashes = generate_hashes_for_audio(audio_path, **hash_kwargs)
-	return match_audio_hashes(
-		query_hashes,
-		anchor_tol=anchor_tol,
-		min_score=min_score,
-	)
+    hash_kwargs = hash_kwargs or {}
+    query_hashes, _ = generate_hashes_for_audio(
+        audio_path,
+        **hash_kwargs,
+    )
+    return match_audio_hashes(
+        query_hashes,
+        anchor_tol=anchor_tol,
+        min_score=min_score,
+    )

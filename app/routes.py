@@ -7,7 +7,7 @@ from fastapi.responses import HTMLResponse
 from pydantic import ValidationError
 from pathlib import Path
 from app.models import SongSearchOutput, SongUploadInput, SongUploadOutput
-from app.utils import generate_hashes_for_audio, ingest_song_from_audio, match_audio_hashes
+from app.utils import ingest_song_from_audio, search_song_by_audio_path
 
 router = APIRouter()
 
@@ -63,7 +63,7 @@ def upload_song(
         )
         return SongUploadOutput.model_validate(result)
     except ValueError as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Failed to ingest song: {exc}") from exc
     finally:
@@ -76,12 +76,21 @@ def search_song(
 ):
     temp_path = _save_upload_to_temp(audio)
     try:
-        query_hashes = generate_hashes_for_audio(temp_path, duration=5)
-        result = match_audio_hashes(query_hashes)
-        print(f"Search completed in {result['time_taken_s']} s")
-        return SongSearchOutput.model_validate(result)
+        result = search_song_by_audio_path(
+            temp_path,
+            anchor_tol=2,
+            min_score=10,
+            hash_kwargs={
+                "duration": 5,
+            },
+        )
+        return SongSearchOutput(
+            title=result["title"],
+            artist=result["artist"],
+            time_taken_s=result["time_taken_s"],
+        )
     except ValueError as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Failed to search song: {exc}") from exc
     finally:
