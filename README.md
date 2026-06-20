@@ -32,8 +32,8 @@ A FastAPI-based service that identifies songs from audio clips using audio finge
 | Top-1 Accuracy            | **99.17%**               |
 | Top-5 Accuracy            | **99.82%**               |
 | Coverage                  | **99.85%**               |
-| Average Retrieval Latency | **0.1545ms**             |
-| P95 Retrieval Latency     | **0.284ms**              |
+| Average Retrieval Latency | **0.1545s**             |
+| P95 Retrieval Latency     | **0.284s**              |
 
 ### Evaluation
 
