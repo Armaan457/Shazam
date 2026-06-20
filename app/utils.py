@@ -3,11 +3,9 @@ import time
 from collections import Counter, defaultdict
 import librosa
 import numpy as np
-import psycopg2
 from psycopg2.extras import execute_values
 from scipy.ndimage import maximum_filter
-from dotenv import load_dotenv
-load_dotenv()
+from app.db import get_connection, release_connection
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 
@@ -187,7 +185,7 @@ def ingest_song_from_audio(
         title = os.path.splitext(
             os.path.basename(audio_path)
         )[0]
-    conn = psycopg2.connect(DATABASE_URL)
+    conn = get_connection()
     cur = conn.cursor()
     try:
 
@@ -253,7 +251,7 @@ def ingest_song_from_audio(
 
     finally:
         cur.close()
-        conn.close()
+        release_connection(conn)
 
     return {
         "song_id": int(song_id),
@@ -284,7 +282,7 @@ def match_audio_hashes(
             ),
         }
 
-    conn = psycopg2.connect(DATABASE_URL)
+    conn = get_connection()
     cur = conn.cursor()
     rows = []
     try:
@@ -451,7 +449,7 @@ def match_audio_hashes(
     finally:
 
         cur.close()
-        conn.close()
+        release_connection(conn)
 
     top_matches = []
 

@@ -40,28 +40,3 @@ def create_noisy_query(
     out_path = Path(temp_dir) / "query.wav"
     sf.write(out_path, clip, sr)
     return out_path
-
-def measure_latency(search_fn, query_path, **kwargs):
-    start = time.perf_counter()
-    result = search_fn(
-        str(query_path),
-        **kwargs,
-    )
-    latency = time.perf_counter() - start
-    return result, latency
-
-def compute_topk_metrics(
-    ground_truth: str,
-    predictions: list[dict],
-):
-    top1 = False
-    top5 = False
-    titles = [
-        p["title"]
-        for p in predictions[:5]
-    ]
-    if titles:
-        top1 = titles[0] == ground_truth
-    top5 = ground_truth in titles
-
-    return top1, top5
