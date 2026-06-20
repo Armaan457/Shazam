@@ -4,3 +4,4 @@ __pycache__
 .env
 .python-version
 *.pyc
+music_database.db

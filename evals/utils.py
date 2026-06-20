@@ -5,6 +5,7 @@ from collections import Counter, defaultdict
 
 import librosa
 import numpy as np
+from pooch import hashes
 from scipy.ndimage import maximum_filter
 
 DB_PATH = "music_database.db"
@@ -13,7 +14,7 @@ def generate_hashes_from_peaks(
     final_peaks,
     dt_min=5,
     dt_max=50,
-    fan_value=10,
+    fan_value=5,
     df_offset=2048,
 ):
     peaks_sorted = np.asarray(final_peaks, dtype=np.int32)
@@ -85,10 +86,10 @@ def generate_hashes_for_audio(
     activity_percentile=20,
     floor_percentile=10,
     min_floor_db=-60,
-    max_per_time=4,
+    max_per_time=3,
     dt_min=5,
     dt_max=50,
-    fan_value=10,
+    fan_value=5,
     df_offset=2048,
 ):
     y, _ = librosa.load(audio_path, sr=sr, duration=duration)
@@ -133,7 +134,10 @@ def generate_hashes_for_audio(
     peaks = np.argwhere(detected)
 
     if peaks.size == 0:
-        return np.empty((0, 2), dtype=np.int64)
+        return (
+        np.empty((0, 3), dtype=np.int64),
+        len(y) / sr,
+    )
 
     buckets = defaultdict(list)
 
@@ -152,13 +156,15 @@ def generate_hashes_for_audio(
 
     final_peaks = np.array(final_peaks, dtype=np.int32)
 
-    return generate_hashes_from_peaks(
+    hashes =  generate_hashes_from_peaks(
         final_peaks,
         dt_min=dt_min,
         dt_max=dt_max,
         fan_value=fan_value,
         df_offset=df_offset,
     )
+    duration_seconds = len(y) / sr
+    return hashes, duration_seconds
 
 
 def generate_hashes_for_audio_files(audio_paths, **kwargs):
@@ -251,6 +257,77 @@ def ingest_song_from_audio(
         "hash_count": int(len(hashes)),
     }
 
+def fingerprint_worker(audio_path):
+    try:
+        hashes, duration = generate_hashes_for_audio(
+            audio_path,
+            duration=None,
+        )
+        return {
+            "success": True,
+            "title": audio_path.stem,
+            "artist": None,
+            "duration": duration,
+            "hashes": hashes,
+        }
+
+    except Exception as e:
+        return {
+            "success": False,
+            "path": str(audio_path),
+            "error": str(e),
+        }
+
+def insert_song_fingerprints(
+    conn,
+    *,
+    title,
+    artist,
+    duration,
+    hashes,
+):
+    cur = conn.cursor()
+    cur.execute(
+        """
+        INSERT INTO songs
+        (
+            title,
+            artist,
+            duration
+        )
+        VALUES (?, ?, ?)
+        """,
+        (
+            title,
+            artist,
+            duration,
+        ),
+    )
+    song_id = cur.lastrowid
+    if len(hashes):
+        rows = [
+            (
+                int(h),
+                int(song_id),
+                int(offset),
+                int(anchor_freq),
+            )
+            for h, offset, anchor_freq in hashes
+        ]
+        cur.executemany(
+            """
+            INSERT INTO fingerprints
+            (
+                hash,
+                song_id,
+                time_offset,
+                anchor_freq
+            )
+            VALUES (?, ?, ?, ?)
+            """,
+            rows,
+        )
+    cur.close()
 
 def match_audio_hashes(
     query_hashes,
@@ -258,147 +335,252 @@ def match_audio_hashes(
     anchor_tol=2,
     min_score=10,
 ):
-    start_time = time.perf_counter()
+    match_start = time.perf_counter()
 
     if query_hashes.size == 0:
-        elapsed_s = round(
-            time.perf_counter() - start_time,
-            4,
-        )
         return {
             "song_id": None,
             "title": None,
             "artist": None,
             "score": 0,
-            "hash_count": 0,
-            "anchor_tol": int(anchor_tol),
-            "min_score": int(min_score),
-            "time_taken_s": elapsed_s,
+            "top_matches": [],
+            "time_taken_s": (
+                time.perf_counter()
+                - match_start
+            ),
         }
-
-    query_hash_list = (
-        query_hashes[:, 0]
-        .astype(int)
-        .tolist()
-    )
 
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
 
-    try:
-        placeholders = ",".join(
-            "?" * len(query_hash_list)
-        )
+    rows = []
 
-        cur.execute(
-            f"""
+    try:
+        batch_size = 100
+        for start in range(
+            0,
+            len(query_hashes),
+            batch_size,
+        ):
+
+            batch = query_hashes[
+                start :
+                start + batch_size
+            ]
+
+            conditions = []
+            params = []
+            for h, _, anchor_freq in batch:
+
+                conditions.append(
+                    """
+                    (
+                        hash = ?
+                        AND anchor_freq BETWEEN ? AND ?
+                    )
+                    """
+                )
+                params.extend(
+                    [
+                        int(h),
+                        int(anchor_freq)
+                        - anchor_tol,
+                        int(anchor_freq)
+                        + anchor_tol,
+                    ]
+                )
+
+            sql = f"""
             SELECT
                 hash,
                 song_id,
                 time_offset,
                 anchor_freq
             FROM fingerprints
-            WHERE hash IN ({placeholders})
-            """,
-            query_hash_list,
+            WHERE {" OR ".join(conditions)}
+            """
+
+            cur.execute(
+                sql,
+                params,
+            )
+
+            rows.extend(
+                cur.fetchall()
+            )
+
+        # print(
+        #     f"Query hashes: {len(query_hashes)}"
+        # )
+
+        # print(
+        #     f"Rows fetched: {len(rows)}"
+        # )
+
+        db_map = defaultdict(list)
+
+        for (
+            h,
+            song_id,
+            offset,
+            anchor_freq,
+        ) in rows:
+
+            db_map[int(h)].append(
+                (
+                    int(song_id),
+                    int(offset),
+                )
+            )
+        votes = defaultdict(list)
+
+        for (
+            h,
+            q_offset,
+            q_anchor_freq,
+        ) in query_hashes:
+
+            h = int(h)
+            q_offset = int(q_offset)
+
+            for (
+                song_id,
+                db_offset,
+            ) in db_map.get(
+                h,
+                [],
+            ):
+
+                votes[song_id].append(
+                    db_offset - q_offset
+                )
+
+        song_scores = []
+
+        for (
+            song_id,
+            deltas,
+        ) in votes.items():
+
+            score = Counter(
+                deltas
+            ).most_common(1)[0][1]
+
+            if score >= min_score:
+
+                song_scores.append(
+                    (
+                        song_id,
+                        score,
+                    )
+                )
+
+        song_scores.sort(
+            key=lambda x: x[1],
+            reverse=True,
         )
 
-        rows = cur.fetchall()
+        top_song_ids = [
+            song_id
+            for song_id, _
+            in song_scores[:5]
+        ]
+
+        song_info = {}
+
+        if top_song_ids:
+
+            placeholders = ",".join(
+                "?" * len(top_song_ids)
+            )
+
+            cur.execute(
+                f"""
+                SELECT
+                    id,
+                    title,
+                    artist
+                FROM songs
+                WHERE id IN ({placeholders})
+                """,
+                top_song_ids,
+            )
+
+            for (
+                sid,
+                title,
+                artist,
+            ) in cur.fetchall():
+
+                song_info[
+                    int(sid)
+                ] = {
+                    "title": title,
+                    "artist": artist,
+                }
 
     finally:
         cur.close()
         conn.close()
 
-    db_map = defaultdict(list)
+    top_matches = []
 
-    for h, song_id, offset, anchor_freq in rows:
-        db_map[int(h)].append(
-            (
-                int(song_id),
-                int(offset),
-                int(anchor_freq),
-            )
+    for (
+        song_id,
+        score,
+    ) in song_scores[:5]:
+
+        info = song_info.get(
+            song_id,
+            {},
         )
 
-    votes = defaultdict(list)
+        top_matches.append(
+            {
+                "song_id": int(song_id),
+                "title": info.get(
+                    "title"
+                ),
+                "artist": info.get(
+                    "artist"
+                ),
+                "score": int(score),
+            }
+        )
 
-    for h, q_offset, q_anchor_freq in query_hashes:
-        h = int(h)
-        q_offset = int(q_offset)
-        q_anchor_freq = int(q_anchor_freq)
-
-        for song_id, db_offset, db_anchor_freq in db_map.get(h, []):
-            if abs(db_anchor_freq - q_anchor_freq) > anchor_tol:
-                continue
-
-            votes[song_id].append(
-                db_offset - q_offset
-            )
-
-    best_song = None
-    best_score = 0
-
-    for song_id, deltas in votes.items():
-        count = Counter(deltas).most_common(1)[0][1]
-
-        if count > best_score:
-            best_score = count
-            best_song = song_id
-
-    if best_score < min_score:
-        best_song = None
-
-    best_title = None
-    best_artist = None
-
-    if best_song is not None:
-        conn = sqlite3.connect(DB_PATH)
-        cur = conn.cursor()
-
-        try:
-            cur.execute(
-                """
-                SELECT title, artist
-                FROM songs
-                WHERE id = ?
-                """,
-                (best_song,),
-            )
-
-            row = cur.fetchone()
-
-            if row:
-                best_title = row[0]
-                best_artist = row[1]
-
-        finally:
-            cur.close()
-            conn.close()
-
-    elapsed_s = round(
-        time.perf_counter() - start_time,
-        4,
+    best_match = (
+        top_matches[0]
+        if top_matches
+        else None
     )
 
     return {
         "song_id": (
-            int(best_song)
-            if best_song is not None
+            best_match["song_id"]
+            if best_match
             else None
         ),
-        "title": best_title,
-        "artist": best_artist,
+        "title": (
+            best_match["title"]
+            if best_match
+            else None
+        ),
+        "artist": (
+            best_match["artist"]
+            if best_match
+            else None
+        ),
         "score": (
-            int(best_score)
-            if best_song is not None
+            best_match["score"]
+            if best_match
             else 0
         ),
-        "hash_count": int(len(query_hashes)),
-        "anchor_tol": int(anchor_tol),
-        "min_score": int(min_score),
-        "time_taken_s": elapsed_s,
+        "top_matches": top_matches,
+        "time_taken_s": (
+            time.perf_counter()
+            - match_start
+        ),
     }
-
 
 def search_song_by_audio_path(
     audio_path,
@@ -408,12 +590,10 @@ def search_song_by_audio_path(
     hash_kwargs=None,
 ):
     hash_kwargs = hash_kwargs or {}
-
-    query_hashes = generate_hashes_for_audio(
+    query_hashes, _ = generate_hashes_for_audio(
         audio_path,
         **hash_kwargs,
     )
-
     return match_audio_hashes(
         query_hashes,
         anchor_tol=anchor_tol,
