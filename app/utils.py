@@ -9,12 +9,9 @@ from app.db import get_connection, release_connection
 import pickle
 import redis
 
-
 DATABASE_URL = os.getenv("DATABASE_URL")
 redis_client = redis.Redis(
-    host="localhost",
-    port=6379,
-    db=0,
+    os.getenv("REDIS_URL"),
     decode_responses=False,
 )
 

@@ -21,6 +21,7 @@ A FastAPI-based service that identifies songs from audio clips using audio finge
 * Scalable design using database indexing
 * Accurate results using offset-based voting
 * Lightweight and modular FastAPI architecture
+* Redis-backed caching for faster repeated searches
 
 ---
 
@@ -34,6 +35,20 @@ A FastAPI-based service that identifies songs from audio clips using audio finge
 | Coverage                  | **99.85%**               |
 | Average Retrieval Latency | **0.1545s**             |
 | P95 Retrieval Latency     | **0.284s**              |
+
+### Under Distortions
+
+| Condition            | Top-1 Accuracy |
+| -------------------- | -------------: |
+| Phone Recording      | **98.41%**     |
+| Noise (Low)          | **98.47%**     |
+| Noise (High)         | **98.77%**     |
+| Realistic Distortion | **98.69%**     |
+| Reverb               | **99.02%**     |
+
+### Strengths and Limitations
+
+The system maintains high recognition accuracy on clean audio as well as under common real-world distortions such as environmental noise, phone-recording artifacts, and reverberation. Performance degrades under pitch-shifting and significant time-stretching due to the frequency- and time-dependent nature of Shazam-style audio fingerprints.
 
 ### Evaluation
 
@@ -61,10 +76,21 @@ To explore the benchmarking pipeline, dataset preparation, and performance evalu
 
 ```bash
 git clone https://github.com/Armaan457/Shazam.git
-cd shazam
 ```
 
-### 2. Create a Virtual Environment
+### 2. Start PostgreSQL and Redis
+
+Start the PostgreSQL database and Redis using Docker Compose inside `app` directory:
+
+```bash
+cd app
+docker compose up -d
+cd ..
+```
+
+Alternatively, you may use managed PostgreSQL and Redis services
+
+### 3. Create a Virtual Environment
 
 Activate virtual environment using the python version specified in `.python-version` file:
 
@@ -80,15 +106,15 @@ Activate virtual environment using the python version specified in `.python-vers
      env\Scripts\activate
      ```
 
-### 3. Install Dependencies
+### 4. Install Dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 4. Configure Environment Variables
+### 5. Configure Environment Variables
 
-Create a `.env` file using `.env.example` and add the respective values (PostgreSQL database URL):
+Create a `.env` file using `.env.example` and add the respective values (PostgreSQL and Redis connection URL):
 
    - **macOS/Linux:**
         ```bash
@@ -100,15 +126,16 @@ Create a `.env` file using `.env.example` and add the respective values (Postgre
      ```
 
 
-### 5. Set Up the Database
+### 6. Set Up the Database
 
 Run the database setup script to create tables and indexes:
 
 ```bash
+cd app
 python setup_db.py
 ```
 
-### 6. Run the App
+### 7. Run the App
 
 Start the FastAPI server:
 
