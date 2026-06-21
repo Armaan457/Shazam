@@ -6,8 +6,17 @@ import numpy as np
 from psycopg2.extras import execute_values
 from scipy.ndimage import maximum_filter
 from app.db import get_connection, release_connection
+import pickle
+import redis
+
 
 DATABASE_URL = os.getenv("DATABASE_URL")
+redis_client = redis.Redis(
+    host="localhost",
+    port=6379,
+    db=0,
+    decode_responses=False,
+)
 
 def generate_hashes_from_peaks(
     final_peaks,
@@ -248,6 +257,7 @@ def ingest_song_from_audio(
                 page_size=page_size,
             )
         conn.commit()
+        redis_client.flushdb()
 
     finally:
         cur.close()
@@ -260,6 +270,7 @@ def ingest_song_from_audio(
         "duration": float(duration),
         "hash_count": int(len(hashes)),
     }
+
 
 def match_audio_hashes(
     query_hashes,
@@ -284,11 +295,13 @@ def match_audio_hashes(
 
     conn = get_connection()
     cur = conn.cursor()
+
     rows = []
+    cache_hits = 0
+    cache_misses = 0
+
     try:
-
         batch_size = 200
-
         for start in range(
             0,
             len(query_hashes),
@@ -300,62 +313,160 @@ def match_audio_hashes(
                 start + batch_size
             ]
 
-            conditions = []
-            params = []
+        keys = []
+        lookup_data = []
 
-            for h, _, anchor_freq in batch:
-
-                conditions.append(
-                    """
-                    (
-                        hash = %s
-                        AND anchor_freq
-                        BETWEEN %s AND %s
-                    )
-                    """
-                )
-
-                params.extend(
-                    [
-                        int(h),
-                        int(anchor_freq)
-                        - anchor_tol,
-                        int(anchor_freq)
-                        + anchor_tol,
-                    ]
-                )
-
-            sql = f"""
-            SELECT
-                hash,
-                song_id,
-                time_offset,
-                anchor_freq
-            FROM fingerprints
-            WHERE {" OR ".join(conditions)}
-            """
-
-            cur.execute(
-                sql,
-                params,
-            )
-
-            rows.extend(
-                cur.fetchall()
-            )
-        votes = defaultdict(list)
         for (
-            _hash,
-            song_id,
-            db_offset,
-            _anchor,
-        ) in rows:
+            h,
+            _,
+            anchor_freq,
+        ) in batch:
 
-            votes[song_id].append(
-                db_offset
+            h = int(h)
+            anchor_freq = int(anchor_freq)
+
+            keys.append(
+                f"fp:{h}:{anchor_freq // 4}"
             )
-        delta_votes = defaultdict(list)
-        db_map = defaultdict(list)
+
+            lookup_data.append(
+                (
+                    h,
+                    anchor_freq,
+                )
+            )
+
+        cached_results = redis_client.mget(
+            keys
+        )
+
+        missing_batch = []
+
+        for (
+            cached,
+            (
+                h,
+                anchor_freq,
+            ),
+        ) in zip(
+            cached_results,
+            lookup_data,
+        ):
+
+            if cached is not None:
+                rows.extend(
+                    pickle.loads(
+                        cached
+                    )
+                )
+                cache_hits += 1
+
+            else:
+                missing_batch.append(
+                    (
+                        h,
+                        anchor_freq,
+                    )
+                )
+
+                cache_misses += 1
+
+            if missing_batch:
+                conditions = []
+                params = []
+
+                for (
+                    h,
+                    anchor_freq,
+                ) in missing_batch:
+
+                    conditions.append(
+                        """
+                        (
+                            hash = %s
+                            AND anchor_freq
+                            BETWEEN %s AND %s
+                        )
+                        """
+                    )
+
+                    params.extend(
+                        [
+                            h,
+                            anchor_freq
+                            - anchor_tol,
+                            anchor_freq
+                            + anchor_tol,
+                        ]
+                    )
+
+                sql = f"""
+                SELECT
+                    hash,
+                    song_id,
+                    time_offset,
+                    anchor_freq
+                FROM fingerprints
+                WHERE {" OR ".join(conditions)}
+                """
+
+                cur.execute(
+                    sql,
+                    params,
+                )
+                db_rows = (
+                    cur.fetchall()
+                )
+
+                grouped = defaultdict(
+                    list
+                )
+                for row in db_rows:
+
+                    h = int(row[0])
+
+                    grouped[h].append(
+                        row
+                    )
+
+                    rows.append(
+                        row
+                    )
+
+                for (
+                    h,
+                    anchor_freq,
+                ) in missing_batch:
+
+                    bucket = (
+                        anchor_freq // 4
+                    )
+
+                    vals = grouped.get(h, [],
+                    )
+                    if len(vals) <= 100:
+                        redis_client.setex(
+                            f"fp:{h}:{bucket}",
+                            3600,
+                            pickle.dumps(vals),
+                        )
+
+        # print(
+        #     f"Redis Hits: "
+        #     f"{cache_hits} | "
+        #     f"Redis Misses: "
+        #     f"{cache_misses}"
+        # )
+
+        # print(
+        #     f"Rows fetched: "
+        #     f"{len(rows)}"
+        # )
+
+        db_map = defaultdict(
+            list
+        )
+
         for (
             h,
             song_id,
@@ -369,6 +480,11 @@ def match_audio_hashes(
                     db_offset,
                 )
             )
+
+        delta_votes = defaultdict(
+            list
+        )
+
         for (
             h,
             q_offset,
@@ -376,7 +492,9 @@ def match_audio_hashes(
         ) in query_hashes:
 
             h = int(h)
-            q_offset = int(q_offset)
+            q_offset = int(
+                q_offset
+            )
 
             for (
                 song_id,
@@ -392,7 +510,9 @@ def match_audio_hashes(
                     db_offset
                     - q_offset
                 )
+
         song_scores = []
+
         for (
             song_id,
             deltas,
@@ -401,7 +521,12 @@ def match_audio_hashes(
             score = Counter(
                 deltas
             ).most_common(1)[0][1]
-            if score >= min_score:
+
+            if (
+                score
+                >= min_score
+            ):
+
                 song_scores.append(
                     (
                         song_id,
@@ -419,9 +544,10 @@ def match_audio_hashes(
             for song_id, _
             in song_scores[:5]
         ]
-        song_info = {}
-        if top_song_ids:
 
+        song_info = {}
+
+        if top_song_ids:
             cur.execute(
                 """
                 SELECT
@@ -431,9 +557,10 @@ def match_audio_hashes(
                 FROM songs
                 WHERE id = ANY(%s)
                 """,
-                (top_song_ids,),
+                (
+                    top_song_ids,
+                ),
             )
-
             for (
                 sid,
                 title,
@@ -447,9 +574,10 @@ def match_audio_hashes(
                     "artist": artist,
                 }
     finally:
-
         cur.close()
-        release_connection(conn)
+        release_connection(
+            conn
+        )
 
     top_matches = []
 
@@ -462,16 +590,21 @@ def match_audio_hashes(
             song_id,
             {},
         )
+
         top_matches.append(
             {
-                "song_id": int(song_id),
+                "song_id": int(
+                    song_id
+                ),
                 "title": info.get(
                     "title"
                 ),
                 "artist": info.get(
                     "artist"
                 ),
-                "score": int(score),
+                "score": int(
+                    score
+                ),
             }
         )
 

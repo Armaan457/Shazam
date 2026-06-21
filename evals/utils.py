@@ -5,7 +5,6 @@ from collections import Counter, defaultdict
 
 import librosa
 import numpy as np
-from pooch import hashes
 from scipy.ndimage import maximum_filter
 
 DB_PATH = "music_database.db"
