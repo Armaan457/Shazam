@@ -8,8 +8,12 @@ from pydantic import ValidationError
 from pathlib import Path
 from app.models import SongSearchOutput, SongUploadInput, SongUploadOutput
 from app.utils import ingest_song_from_audio, search_song_by_audio_path
+from concurrent.futures import ProcessPoolExecutor
+import asyncio
 
 router = APIRouter()
+search_pool = ProcessPoolExecutor(max_workers=4)
+ingest_pool = ProcessPoolExecutor(max_workers=2)
 
 def _parse_song_upload_input(
     title: str = Form(...),
@@ -48,41 +52,70 @@ def home():
 def health_check():
     return {"status": "ok"}
 
+def ingest_song_worker(
+    temp_path: str,
+    title: str,
+    artist: str | None,
+):
+    return ingest_song_from_audio(
+        temp_path,
+        title=title,
+        artist=artist,
+    )
 
 @router.post("/songs/upload", response_model=SongUploadOutput)
-def upload_song(
+async def upload_song(
     audio: UploadFile = File(...),
     song_input: SongUploadInput = Depends(_parse_song_upload_input),
 ):
     temp_path = _save_upload_to_temp(audio)
     try:
-        result = ingest_song_from_audio(
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(
+            ingest_pool,
+            ingest_song_worker,
             temp_path,
-            title=song_input.title,
-            artist=song_input.artist,
+            song_input.title,
+            song_input.artist,
         )
         return SongUploadOutput.model_validate(result)
+
     except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=409,
+            detail=str(exc),
+        ) from exc
+
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to ingest song: {exc}") from exc
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to ingest song: {exc}",
+        ) from exc
     finally:
         if os.path.exists(temp_path):
             os.remove(temp_path)
 
+def search_song_worker(temp_path: str):
+    return search_song_by_audio_path(
+        temp_path,
+        anchor_tol=2,
+        min_score=10,
+        hash_kwargs={
+            "duration": 5,
+        },
+    )
+
 @router.post("/songs/search", response_model=SongSearchOutput)
-def search_song(
+async def search_song(
     audio: UploadFile = File(...),
 ):
     temp_path = _save_upload_to_temp(audio)
     try:
-        result = search_song_by_audio_path(
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(
+            search_pool,
+            search_song_worker,
             temp_path,
-            anchor_tol=2,
-            min_score=10,
-            hash_kwargs={
-                "duration": 5,
-            },
         )
         return SongSearchOutput(
             title=result["title"],

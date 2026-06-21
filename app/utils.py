@@ -10,7 +10,7 @@ import pickle
 import redis
 
 DATABASE_URL = os.getenv("DATABASE_URL")
-redis_client = redis.Redis(
+redis_client = redis.from_url(
     os.getenv("REDIS_URL"),
     decode_responses=False,
 )
@@ -254,7 +254,7 @@ def ingest_song_from_audio(
                 page_size=page_size,
             )
         conn.commit()
-        redis_client.flushdb()
+        # redis_client.flushdb()
 
     finally:
         cur.close()
