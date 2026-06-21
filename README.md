@@ -46,6 +46,7 @@ To explore the benchmarking pipeline, dataset preparation, and performance evalu
 * **Backend:** FastAPI
 * **Audio Processing:** Librosa, NumPy, SciPy
 * **Database:** PostgreSQL (web application) and SQLite (local evaluation)
+* **Caching Layer:** Redis
 ---
 
 ## Setup Instructions
