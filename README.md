@@ -27,6 +27,8 @@ A FastAPI-based service that identifies songs from audio clips using audio finge
 
 ## Results
 
+The same fingerprinting configuration was used across all evaluations without dataset-specific tuning.
+
 ### Clean Audio Performance
 
 | Dataset     | Size  | Top-1 Accuracy | Top-5 Accuracy | Coverage |
@@ -37,11 +39,11 @@ A FastAPI-based service that identifies songs from audio clips using audio finge
 | Metric | Value |
 |---------|-------|
 | Average Retrieval Latency | **0.1416s** |
-| P95 Retrieval Latency | **0.2241 ms** |
+| P95 Retrieval Latency | **0.2241s** |
 
 ### Under Distortions
 
-| Condition | FMA Small | MTG Jamendo (Subset) |
+| Condition | Top-1 Accuracy: FMA Small | Top-1 Accuracy: MTG Jamendo (Subset) |
 |------------|---------:|-----------:|
 | Phone Recording | **98.24%** | **96.16%** |
 | Noise (Low) | **98.17%** | **96.52%** |
@@ -72,7 +74,7 @@ To explore the benchmarking pipeline, dataset preparation, and performance evalu
 ### Prerequisites
 
 * Python 3.10 or higher
-* PostgreSQL database
+* Docker
 * pip (Python package manager)
 
 ### 1. Clone the Repository
@@ -136,6 +138,7 @@ Run the database setup script to create tables and indexes:
 ```bash
 cd app
 python setup_db.py
+cd ..
 ```
 
 ### 7. Run the App
