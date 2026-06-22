@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import random
 import shutil
 import time
 from pathlib import Path
+import librosa
+import librosa
 import numpy as np
 
 import utils as shazam_utils
@@ -13,17 +16,14 @@ from utils import search_song_by_audio_path
 dataset_dir = Path(__file__).resolve().parents[1] / "data" / "fma_small" 
 db_path = Path(__file__).resolve().with_name("music_database.db")
 DEFAULT_SR = 22050
-DEFAULT_QUERY_START_S = 10.0
-DEFAULT_QUERY_DURATION_S = 5.0
+DEFAULT_QUERY_DURATION_S = 5
 DEFAULT_ANCHOR_TOL = 2
 DEFAULT_MIN_SCORE = 10
-
 
 def evaluate(
     audio_files: list[Path],
     *,
     sr: int,
-    query_start_s: float,
     query_duration_s: float,
     anchor_tol: int,
     min_score: int,
@@ -39,9 +39,16 @@ def evaluate(
 
     for index, audio_path in enumerate(audio_files, start=1):
         try:
+            duration = librosa.get_duration(path=str(audio_path))
+            if duration <= 5:
+                continue
+            query_start = random.uniform(
+                0,
+                duration - query_duration_s,
+            )
             query_clip_path = make_query_clip(
                 audio_path,
-                clip_start_s=query_start_s,
+                clip_start_s=query_start,
                 clip_duration_s=query_duration_s,
                 sr=sr,
             )
@@ -132,19 +139,16 @@ def evaluate(
         if total
         else 0.0
     )
-
     top5_accuracy = (
         top5_correct / total
         if total
         else 0.0
     )
-
     coverage = (
         matched / total
         if total
         else 0.0
     )
-
     return {
         "total": total,
         "matched": matched,
@@ -174,25 +178,21 @@ def main():
         f"Found {len(audio_files)} audio files"
     )
 
-    REBUILD_DATABASE = False
+    REBUILD_DATABASE = True
     if REBUILD_DATABASE or not db_path.exists():
-        print(
-            "Building fingerprint database..."
-        )
+        print("Building fingerprint database...")
         build_database_batch(
             audio_files,
             clean_db=True,
         )
     else:
         print(
-            f"Using existing database: "
-            f"{db_path}"
+            f"Using existing database: {db_path}"
         )
 
     results = evaluate(
         audio_files,
         sr=DEFAULT_SR,
-        query_start_s=DEFAULT_QUERY_START_S,
         query_duration_s=DEFAULT_QUERY_DURATION_S,
         anchor_tol=DEFAULT_ANCHOR_TOL,
         min_score=DEFAULT_MIN_SCORE,

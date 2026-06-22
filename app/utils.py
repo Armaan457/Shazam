@@ -365,7 +365,6 @@ def match_audio_hashes(
                         anchor_freq,
                     )
                 )
-
                 cache_misses += 1
 
             if missing_batch:

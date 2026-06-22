@@ -5,3 +5,4 @@ __pycache__
 .python-version
 *.pyc
 music_database.db
+mtg-jamendo-dataset

@@ -27,24 +27,27 @@ A FastAPI-based service that identifies songs from audio clips using audio finge
 
 ## Results
 
-| Metric                    | Result                   |
-| ------------------------- | ------------------------ |
-| Dataset                   | 8,000 Tracks             |
-| Top-1 Accuracy            | **99.17%**               |
-| Top-5 Accuracy            | **99.82%**               |
-| Coverage                  | **99.85%**               |
-| Average Retrieval Latency | **0.1545s**             |
-| P95 Retrieval Latency     | **0.284s**              |
+### Clean Audio Performance
+
+| Dataset     | Size  | Top-1 Accuracy | Top-5 Accuracy | Coverage |
+|-------------|------:|---------------:|---------------:|---------:|
+| FMA Small   | 8,000 | **99.34%**     | **99.81%**     | **99.84%** |
+| MTG Jamendo (Subset) | 1,400 | **96.77%**     | **96.98%**     | **97.06%** |
+
+| Metric | Value |
+|---------|-------|
+| Average Retrieval Latency | **0.1416s** |
+| P95 Retrieval Latency | **0.2241 ms** |
 
 ### Under Distortions
 
-| Condition            | Top-1 Accuracy |
-| -------------------- | -------------: |
-| Phone Recording      | **98.41%**     |
-| Noise (Low)          | **98.47%**     |
-| Noise (High)         | **98.77%**     |
-| Realistic Distortion | **98.69%**     |
-| Reverb               | **99.02%**     |
+| Condition | FMA Small | MTG Jamendo (Subset) |
+|------------|---------:|-----------:|
+| Phone Recording | **98.24%** | **96.16%** |
+| Noise (Low) | **98.17%** | **96.52%** |
+| Noise (High) | **97.73%** | **92.61%** |
+| Realistic Distortion | **97.24%** | **95.35%** |
+| Reverb | **99.47%** | **95.84%** |
 
 ### Strengths and Limitations
 
